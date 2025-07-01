@@ -1,3 +1,4 @@
+# coding: utf-8
 from flask import Flask, render_template, jsonify, request, redirect, url_for
 from sqlalchemy.orm import Session
 import datetime
@@ -6,11 +7,12 @@ import os
 import joblib
 import pandas as pd
 import logging
-import database 
+import database # Importamos el módulo para acceder a setup_database_engine
 
-from database.database import init_db, get_db, setup_database_engine
+# --- Importaciones de módulos del proyecto (desde src) ---
+from database.database import init_db, get_db, setup_database_engine # Añadido setup_database_engine
 from database.models import Prediccion, IntensidadHelada, ResultadoPrediccion
-from src.data_fetcher import obtener_datos_meteorologicos_openmeteo
+from src.data_fetcher import obtener_datos_meteorologicos_openmeteo # FETCHED_COLUMNAS_MODELO será COLUMNAS_FEATURES_PREDICCION
 
 # --- Configuración de Logging ---
 logging.basicConfig(level=logging.INFO)
@@ -59,6 +61,24 @@ if os.environ.get("WERKZEUG_RUN_MAIN") == "true" or not app.debug:
         prediction_model = None
 
 # --- Funciones Auxiliares (movidas desde el antiguo app.py) ---
+def estimar_humedad_suelo_volumetrica(humedad_relativa_percent, precipitacion_mm):
+    """
+    Estima la humedad volumétrica del suelo (m³/m³) basada en la humedad relativa y la precipitación.
+    Esta es una aproximación heurística y los coeficientes/escalas pueden necesitar ajuste.
+    """
+    if pd.isna(humedad_relativa_percent) or pd.isna(precipitacion_mm):
+        logger.warning("Datos de humedad relativa o precipitación faltantes para estimar humedad del suelo. Retornando NA.")
+        return pd.NA
+
+    # Fórmula base propuesta por el usuario, con ponderaciones
+    raw_score = (humedad_relativa_percent * 0.6) + (precipitacion_mm * 1.2)
+
+    estimated_sm_volumetric = raw_score / 200.0
+    capped_sm_volumetric = min(0.55, max(0.05, estimated_sm_volumetric))
+    
+    logger.info(f"HumedadSuelo estimada: HR={humedad_relativa_percent}%, Precip={precipitacion_mm}mm -> Raw={raw_score:.2f} -> Scaled={estimated_sm_volumetric:.3f} -> Capped={capped_sm_volumetric:.3f} m³/m³")
+    return capped_sm_volumetric
+
 def determinar_estado_helada(prediccion_valor, probabilidad_helada, temperatura_actual_o_prevista):
     resultado_pred = ResultadoPrediccion.poco_probable
     intensidad_pred = IntensidadHelada.no_helada
@@ -100,7 +120,6 @@ def pronostico_automatico():
     if datos_meteo_df is None or datos_meteo_df.empty:
         logger.error("No se pudieron obtener datos de Open-Meteo.")
         return jsonify({"error": "No se pudieron obtener datos meteorológicos externos."}), 503
-                
     tz_datos = datos_meteo_df['time'].iloc[0].tzinfo if not datos_meteo_df.empty and datos_meteo_df['time'].iloc[0].tzinfo else None
     ahora = datetime.datetime.now(tz_datos)
     dia_siguiente = ahora.date() + pd.Timedelta(days=1)
@@ -117,7 +136,7 @@ def pronostico_automatico():
     datos_madrugada_df = datos_meteo_df[
         (datos_meteo_df['time'] >= madrugada_inicio) &
         (datos_meteo_df['time'] <= madrugada_fin)
-    ].copy() # Usar .copy() para evitar SettingWithCopyWarning si se hacen modificaciones
+    ].copy()
 
     datos_para_modelo_serie = None
     fecha_pred_dt = None
@@ -127,55 +146,79 @@ def pronostico_automatico():
         logger.warning(f"No hay ningún dato horario disponible en Open-Meteo para el rango de {madrugada_inicio} a {madrugada_fin}.")
     else:
         # Iterar sobre las horas disponibles en la madrugada para encontrar la primera con datos completos
-        for index, fila_horaria in datos_madrugada_df.iterrows():
-            datos_hora_actual_dict = fila_horaria[COLUMNAS_FEATURES_PREDICCION].to_dict()
+        for index, fila_horaria_completa in datos_madrugada_df.iterrows():
+            datos_hora_actual_dict = fila_horaria_completa.to_dict()
 
-            # Verificar si todos los datos necesarios están presentes y son válidos
+            # Estimación de HumedadSuelo si es necesario
+            if 'HumedadSuelo' not in datos_hora_actual_dict or pd.isna(datos_hora_actual_dict['HumedadSuelo']):
+                logger.warning(f"HumedadSuelo es NaN para {fila_horaria_completa['time']}. Intentando estimación.")
+                if 'HumedadRelativa' in datos_hora_actual_dict and 'PrecipitacionMM' in datos_hora_actual_dict:
+                    hr_val = datos_hora_actual_dict['HumedadRelativa']
+                    precip_val = datos_hora_actual_dict['PrecipitacionMM']
+                    # Actualizamos el diccionario directamente. La serie original no se modifica aquí.
+                    datos_hora_actual_dict['HumedadSuelo'] = estimar_humedad_suelo_volumetrica(hr_val, precip_val)
+                    if pd.isna(datos_hora_actual_dict['HumedadSuelo']):
+                        logger.error(f"Estimación de HumedadSuelo falló (resulto en NaN) para {fila_horaria_completa['time']}. No se puede proceder con esta hora.")
+                        # Continuar al siguiente registro horario si la estimación falla críticamente
+                        continue 
+                else:
+                    logger.error(f"No se puede estimar HumedadSuelo para {fila_horaria_completa['time']} por falta de HumedadRelativa o PrecipitacionMM.")
+
+                    continue
+            
             completo_y_valido = True
-            for col in COLUMNAS_FEATURES_PREDICCION:
-                if col not in datos_hora_actual_dict or pd.isna(datos_hora_actual_dict[col]):
+            # Usamos una copia del dict para no enviar 'PrecipitacionMM' al modelo si no es una feature directa.
+            datos_para_modelo_dict = {}
+            for col_feature in COLUMNAS_FEATURES_PREDICCION:
+                if col_feature not in datos_hora_actual_dict or pd.isna(datos_hora_actual_dict[col_feature]):
                     completo_y_valido = False
-                    logger.debug(f"Dato faltante o NaN para '{col}' en {fila_horaria['time']}: {datos_hora_actual_dict[col]}")
-                    break # No es necesario seguir verificando esta fila
+                    logger.debug(f"Dato faltante o NaN para la feature del modelo '{col_feature}' en {fila_horaria_completa['time']}: {datos_hora_actual_dict.get(col_feature)}")
+                    break # No es necesario seguir verificando esta fila para el modelo
+                datos_para_modelo_dict[col_feature] = datos_hora_actual_dict[col_feature]
 
             if completo_y_valido:
-                datos_para_modelo_serie = fila_horaria
-                fecha_pred_dt = fila_horaria['time']
-                datos_hora_dict_seleccionados = datos_hora_actual_dict
-                logger.info(f"Datos completos encontrados para la predicción a las {fecha_pred_dt.strftime('%Y-%m-%d %H:%M:%S')}.")
-                break # Salir del bucle, ya encontramos la primera hora válida
+                datos_para_modelo_serie = fila_horaria_completa # Esta serie puede tener más columnas que las del modelo (ej. PrecipitacionMM)
+                fecha_pred_dt = fila_horaria_completa['time']
+                datos_hora_dict_seleccionados_para_log_y_bd = datos_hora_actual_dict.copy() # Contiene HumedadSuelo estimada y otras
+                
+                logger.info(f"Datos listos para la predicción a las {fecha_pred_dt.strftime('%Y-%m-%d %H:%M:%S')}. Features: {datos_para_modelo_dict}")
+                break # Salir del bucle, ya encontramos la primera hora válida y procesada
             else:
-                logger.info(f"Datos incompletos para {fila_horaria['time']}. Valores: {datos_hora_actual_dict}. Buscando siguiente hora...")
+                logger.info(f"Datos incompletos para el modelo en {fila_horaria_completa['time']} incluso después de intentar estimar. Valores: {datos_hora_actual_dict}. Buscando siguiente hora...")
 
-
-    if datos_para_modelo_serie is None or fecha_pred_dt is None:
-        msg = f"No se encontraron datos horarios completos para las variables {COLUMNAS_FEATURES_PREDICCION} en el rango de la madrugada del {dia_siguiente.strftime('%Y-%m-%d')} ({hora_inicio_madrugada:02d}:00-{hora_fin_madrugada:02d}:00)."
+    if datos_para_modelo_serie is None or fecha_pred_dt is None or datos_para_modelo_dict is None:
+        msg = f"No se encontraron datos horarios completos (o no se pudieron estimar satisfactoriamente) para las variables {COLUMNAS_FEATURES_PREDICCION} en el rango de la madrugada del {dia_siguiente.strftime('%Y-%m-%d')} ({hora_inicio_madrugada:02d}:00-{hora_fin_madrugada:02d}:00)."
         logger.error(msg)
-        return jsonify({"error": msg}), 400 # o 404 si se considera "no encontrado"
+        return jsonify({"error": msg}), 400
 
-    # Si llegamos aquí, tenemos datos_hora_dict_seleccionados válidos y completos
-    df_pred_hora = pd.DataFrame([datos_hora_dict_seleccionados], columns=COLUMNAS_FEATURES_PREDICCION)
-    logger.info(f"DataFrame para predicción única: \n{df_pred_hora.to_string()}")
+    # Si llegamos aquí, tenemos datos_para_modelo_dict válidos y completos para el modelo
+    df_pred_hora = pd.DataFrame([datos_para_modelo_dict], columns=COLUMNAS_FEATURES_PREDICCION)
+    logger.info(f"DataFrame para predicción única (solo features del modelo): \n{df_pred_hora.to_string()}")
 
     try:
         pred_array = prediction_model.predict(df_pred_hora)
         prob_array = prediction_model.predict_proba(df_pred_hora)
         pred_valor = int(pred_array[0])
         prob_helada = float(prob_array[0][1])
-        temp_pronosticada = datos_hora_dict['Temperatura']
+        # temp_pronosticada se toma del diccionario que tiene todos los datos de esa hora
+        temp_pronosticada = datos_hora_dict_seleccionados_para_log_y_bd['Temperatura'] 
 
         resultado, intensidad, duracion = determinar_estado_helada(pred_valor, prob_helada, temp_pronosticada)
 
         db_session: Session = next(get_db())
         try:
+            # Usamos datos_hora_dict_seleccionados_para_log_y_bd para parametros_entrada
+            # porque este contiene la HumedadSuelo (potencialmente estimada) y otras variables como PrecipitacionMM.
+            parametros_entrada_json = json.dumps({k: v for k, v in datos_hora_dict_seleccionados_para_log_y_bd.items() if not pd.isna(v) and k != 'time'})
+
             nueva_pred = Prediccion(
-                fecha_prediccion_para=fecha_pred_dt.to_pydatetime(), # Convertir Timestamp de pandas a datetime de Python
+                fecha_prediccion_para=fecha_pred_dt.to_pydatetime(),
                 ubicacion="Patala, Pucará (Open-Meteo)",
                 estacion_meteorologica="Open-Meteo Forecast",
                 temperatura_minima_prevista=temp_pronosticada,
                 probabilidad_helada=prob_helada, resultado=resultado,
                 intensidad=intensidad, duracion_estimada_horas=duracion,
-                parametros_entrada=json.dumps(datos_hora_dict),
+                parametros_entrada=parametros_entrada_json,
                 fuente_datos_entrada="Open-Meteo API via src.data_fetcher (Pred. Madrugada)"
             )
             db_session.add(nueva_pred)
@@ -222,6 +265,7 @@ def ver_registros():
 
         if fecha_filtro:
             try:
+                # strptime returns a datetime object, so calling .date() is correct here.
                 fecha_dt = datetime.datetime.strptime(fecha_filtro, "%Y-%m-%d").date()
                 query = query.filter( Prediccion.fecha_prediccion_para >= datetime.datetime.combine(fecha_dt, datetime.datetime.min.time()),
                                       Prediccion.fecha_prediccion_para <= datetime.datetime.combine(fecha_dt, datetime.datetime.max.time()))
