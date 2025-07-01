@@ -1,4 +1,3 @@
-# coding: utf-8
 from flask import Flask, render_template, jsonify, request, redirect, url_for
 from sqlalchemy.orm import Session
 import datetime
@@ -7,12 +6,11 @@ import os
 import joblib
 import pandas as pd
 import logging
-import database # Importamos el módulo para acceder a setup_database_engine
+import database 
 
-# --- Importaciones de módulos del proyecto (desde src) ---
-from database.database import init_db, get_db, setup_database_engine # Añadido setup_database_engine
+from database.database import init_db, get_db, setup_database_engine
 from database.models import Prediccion, IntensidadHelada, ResultadoPrediccion
-from src.data_fetcher import obtener_datos_meteorologicos_openmeteo # FETCHED_COLUMNAS_MODELO será COLUMNAS_FEATURES_PREDICCION
+from src.data_fetcher import obtener_datos_meteorologicos_openmeteo
 
 # --- Configuración de Logging ---
 logging.basicConfig(level=logging.INFO)
@@ -46,17 +44,19 @@ NOMBRE_MODELO_PREDICCION_PKL = "modelo_arbol_decision.pkl"
 COLUMNAS_FEATURES_PREDICCION = ['Temperatura', 'HumedadRelativa', 'PresionAtmosferica', 'HumedadSuelo']
 
 prediction_model = None
-try:
-    ruta_modelo_pkl = os.path.join(RUTA_MODELOS_ENTRENADOS, NOMBRE_MODELO_PREDICCION_PKL)
-    if os.path.exists(ruta_modelo_pkl):
-        prediction_model = joblib.load(ruta_modelo_pkl)
-        logger.info(f"Modelo de predicción cargado exitosamente desde: {ruta_modelo_pkl}")
-    else:
-        logger.error(f"Error crítico: No se encontró el modelo de predicción en la ruta especificada: {ruta_modelo_pkl}.")
-        logger.warning("La funcionalidad de predicción NO estará disponible.")
-except Exception as e:
-    logger.error(f"Error crítico al cargar el modelo de predicción desde {ruta_modelo_pkl}: {e}", exc_info=True)
-    prediction_model = None
+# Solo cargar modelo y configurar DB en el proceso principal de Werkzeug o cuando no se usa el reloader
+if os.environ.get("WERKZEUG_RUN_MAIN") == "true" or not app.debug:
+    try:
+        ruta_modelo_pkl = os.path.join(RUTA_MODELOS_ENTRENADOS, NOMBRE_MODELO_PREDICCION_PKL)
+        if os.path.exists(ruta_modelo_pkl):
+            prediction_model = joblib.load(ruta_modelo_pkl)
+            logger.info(f"Modelo de predicción cargado exitosamente desde: {ruta_modelo_pkl}")
+        else:
+            logger.error(f"Error crítico: No se encontró el modelo de predicción en la ruta especificada: {ruta_modelo_pkl}.")
+            logger.warning("La funcionalidad de predicción NO estará disponible.")
+    except Exception as e:
+        logger.error(f"Error crítico al cargar el modelo de predicción desde {ruta_modelo_pkl}: {e}", exc_info=True)
+        prediction_model = None
 
 # --- Funciones Auxiliares (movidas desde el antiguo app.py) ---
 def determinar_estado_helada(prediccion_valor, probabilidad_helada, temperatura_actual_o_prevista):
@@ -100,26 +100,16 @@ def pronostico_automatico():
     if datos_meteo_df is None or datos_meteo_df.empty:
         logger.error("No se pudieron obtener datos de Open-Meteo.")
         return jsonify({"error": "No se pudieron obtener datos meteorológicos externos."}), 503
-
-    # Determinar la fecha y hora para la predicción de "noche o madrugada" del día siguiente.
-    # Por ejemplo, 3:00 AM del día siguiente.
-    # El 'time' en datos_meteo_df es un datetime object (potencialmente UTC o localizado por data_fetcher).
-    # Asumimos que 'time' en datos_meteo_df es un objeto datetime, idealmente localizado o consistentemente naive.
-    # La API de Open-Meteo devuelve tiempos que suelen ser UTC o localizados según 'timezone'='auto'.
-
-    # Determinar el rango de la madrugada del día siguiente
-    # Usamos el timezone de los datos si está disponible, sino asumimos que 'now' es compatible.
+                
     tz_datos = datos_meteo_df['time'].iloc[0].tzinfo if not datos_meteo_df.empty and datos_meteo_df['time'].iloc[0].tzinfo else None
     ahora = datetime.datetime.now(tz_datos)
     dia_siguiente = ahora.date() + pd.Timedelta(days=1)
 
-    # Definir el rango horario para la predicción en la madrugada (ej. 1 AM a 5 AM)
-    # Estas horas son locales al timezone de los datos.
     hora_inicio_madrugada = 1
     hora_fin_madrugada = 5
 
-    madrugada_inicio = datetime.datetime.combine(dia_siguiente, datetime.time(hour_inicio_madrugada), tzinfo=tz_datos)
-    madrugada_fin = datetime.datetime.combine(dia_siguiente, datetime.time(hour_fin_madrugada), tzinfo=tz_datos)
+    madrugada_inicio = datetime.datetime.combine(dia_siguiente, datetime.time(hora_inicio_madrugada), tzinfo=tz_datos)
+    madrugada_fin = datetime.datetime.combine(dia_siguiente, datetime.time(hora_fin_madrugada), tzinfo=tz_datos)
 
     logger.info(f"Buscando datos completos para predicción en la madrugada del {dia_siguiente.strftime('%Y-%m-%d')} entre {madrugada_inicio.strftime('%H:%M')} y {madrugada_fin.strftime('%H:%M')}.")
 
@@ -232,10 +222,7 @@ def ver_registros():
 
         if fecha_filtro:
             try:
-                # strptime returns a datetime object, so calling .date() is correct here.
                 fecha_dt = datetime.datetime.strptime(fecha_filtro, "%Y-%m-%d").date()
-                # datetime.datetime.combine needs a date object and a time object.
-                # datetime.time.min and datetime.time.max are correct.
                 query = query.filter( Prediccion.fecha_prediccion_para >= datetime.datetime.combine(fecha_dt, datetime.datetime.min.time()),
                                       Prediccion.fecha_prediccion_para <= datetime.datetime.combine(fecha_dt, datetime.datetime.max.time()))
             except ValueError:
@@ -279,10 +266,6 @@ def ver_registros_ui():
 def obtener_prediccion_actual():
     db_session: Session = next(get_db())
     try:
-        # Buscar la predicción más reciente para hoy o el futuro cercano.
-        # Esto podría necesitar lógica más sofisticada dependiendo de cómo se definan las predicciones "actuales".
-        # Por ahora, buscaremos la predicción más reciente cuya 'fecha_prediccion_para' sea
-        # igual o posterior al inicio del día de hoy.
         hoy_inicio = datetime.datetime.combine(datetime.date.today(), datetime.datetime.min.time())
 
         prediccion_actual = db_session.query(Prediccion)\
@@ -325,22 +308,14 @@ def inicializar_aplicacion(flask_app):
     # Aquí se podrían añadir otras inicializaciones si fueran necesarias
 
 if __name__ == '__main__':
-    logger.info("Iniciando aplicación de predicción de heladas...")
-    inicializar_aplicacion(app) # Pasar la instancia de la app Flask
-
+    # Solo inicializar la app en el proceso principal de Werkzeug o cuando no se usa el reloader
+    if os.environ.get("WERKZEUG_RUN_MAIN") == "true" or not app.debug:
+        logger.info("Iniciando aplicación de predicción de heladas...")
+        inicializar_aplicacion(app) # Pasar la instancia de la app Flask
+    # El logger para el servidor Flask se mostrará igualmente, lo cual es útil.
     logger.info(f"Iniciando servidor Flask. Accede a la interfaz en http://{os.environ.get('FLASK_HOST', '0.0.0.0')}:{os.environ.get('FLASK_PORT', 5000)}")
     app.run(
         host=os.environ.get("FLASK_HOST", "0.0.0.0"),
         port=int(os.environ.get("FLASK_PORT", 5000)),
         debug=(os.environ.get("FLASK_DEBUG", "True").lower() == "true")
     )
-
-# --- Comentarios sobre otros scripts en src/ ---
-# Los scripts como src/entrenamiento_modelo.py, src/analisis_importancia_variables.py,
-# y src/evaluacion_modelo_H02.py pueden seguir siendo ejecutados individualmente
-# (ej. `python src/entrenamiento_modelo.py`) si se desea realizar esas tareas
-# específicas. Sus rutas internas (RUTA_BASE = "../") deberían seguir funcionando
-# correctamente cuando se ejecutan desde la carpeta src/.
-# Si se quisiera integrarlos como comandos o funciones accesibles desde este
-# main.py, se podrían importar y llamar aquí, posiblemente usando argumentos de línea de comandos.
-# Por ahora, se mantienen como scripts independientes.
