@@ -104,64 +104,67 @@ def pronostico_automatico():
     # Determinar la fecha y hora para la predicción de "noche o madrugada" del día siguiente.
     # Por ejemplo, 3:00 AM del día siguiente.
     # El 'time' en datos_meteo_df es un datetime object (potencialmente UTC o localizado por data_fetcher).
-    # Asumimos que 'time' está en una zona horaria consistente (ej. UTC) o ya localizado.
-    # data_fetcher usa timezone='auto', que podría ser UTC o la hora local del servidor.
-    # Para robustez, sería ideal que data_fetcher siempre devuelva UTC y aquí se maneje.
-    # Por ahora, confiamos en la consistencia de 'time'.
+    # Asumimos que 'time' en datos_meteo_df es un objeto datetime, idealmente localizado o consistentemente naive.
+    # La API de Open-Meteo devuelve tiempos que suelen ser UTC o localizados según 'timezone'='auto'.
 
-    ahora = datetime.datetime.now(datos_meteo_df['time'].iloc[0].tzinfo if datos_meteo_df['time'].iloc[0].tzinfo else None)
+    # Determinar el rango de la madrugada del día siguiente
+    # Usamos el timezone de los datos si está disponible, sino asumimos que 'now' es compatible.
+    tz_datos = datos_meteo_df['time'].iloc[0].tzinfo if not datos_meteo_df.empty and datos_meteo_df['time'].iloc[0].tzinfo else None
+    ahora = datetime.datetime.now(tz_datos)
     dia_siguiente = ahora.date() + pd.Timedelta(days=1)
-    hora_prediccion_target = datetime.datetime.combine(dia_siguiente, datetime.datetime.min.time().replace(hour=3))
 
-    # Si los tiempos en df son naive y 'ahora' es aware (o viceversa), la comparación puede fallar o ser incorrecta.
-    # Forzamos hora_prediccion_target a tener el mismo estado de timezone que df['time']
-    if datos_meteo_df['time'].iloc[0].tzinfo is not None and hora_prediccion_target.tzinfo is None:
-        hora_prediccion_target = hora_prediccion_target.replace(tzinfo=datos_meteo_df['time'].iloc[0].tzinfo)
-    elif datos_meteo_df['time'].iloc[0].tzinfo is None and hora_prediccion_target.tzinfo is not None:
-        hora_prediccion_target = hora_prediccion_target.replace(tzinfo=None)
+    # Definir el rango horario para la predicción en la madrugada (ej. 1 AM a 5 AM)
+    # Estas horas son locales al timezone de los datos.
+    hora_inicio_madrugada = 1
+    hora_fin_madrugada = 5
 
-    logger.info(f"Buscando datos para la predicción alrededor de: {hora_prediccion_target}")
+    madrugada_inicio = datetime.datetime.combine(dia_siguiente, datetime.time(hour_inicio_madrugada), tzinfo=tz_datos)
+    madrugada_fin = datetime.datetime.combine(dia_siguiente, datetime.time(hour_fin_madrugada), tzinfo=tz_datos)
 
-    # Encontrar la fila más cercana a esta hora.
-    # Podríamos interpolar, pero por simplicidad, tomaremos la hora más cercana disponible.
-    # Open-Meteo devuelve datos horarios, así que deberíamos encontrar la hora exacta.
-    fila_prediccion = datos_meteo_df[datos_meteo_df['time'] == hora_prediccion_target]
+    logger.info(f"Buscando datos completos para predicción en la madrugada del {dia_siguiente.strftime('%Y-%m-%d')} entre {madrugada_inicio.strftime('%H:%M')} y {madrugada_fin.strftime('%H:%M')}.")
 
-    if fila_prediccion.empty:
-        # Si no hay datos para la hora exacta, podríamos tomar la más cercana o la primera de la madrugada.
-        # Por ejemplo, datos entre las 00:00 y 06:00 del día siguiente.
-        logger.warning(f"No se encontraron datos para la hora exacta {hora_prediccion_target}. Buscando en rango de madrugada...")
-        madrugada_siguiente_inicio = datetime.datetime.combine(dia_siguiente, datetime.datetime.min.time())
-        madrugada_siguiente_fin = datetime.datetime.combine(dia_siguiente, datetime.datetime.min.time().replace(hour=6))
+    # Filtrar el DataFrame para el rango de la madrugada del día siguiente
+    datos_madrugada_df = datos_meteo_df[
+        (datos_meteo_df['time'] >= madrugada_inicio) &
+        (datos_meteo_df['time'] <= madrugada_fin)
+    ].copy() # Usar .copy() para evitar SettingWithCopyWarning si se hacen modificaciones
 
-        if datos_meteo_df['time'].iloc[0].tzinfo is not None: # Ajustar tz si es necesario
-            madrugada_siguiente_inicio = madrugada_siguiente_inicio.replace(tzinfo=datos_meteo_df['time'].iloc[0].tzinfo)
-            madrugada_siguiente_fin = madrugada_siguiente_fin.replace(tzinfo=datos_meteo_df['time'].iloc[0].tzinfo)
+    datos_para_modelo_serie = None
+    fecha_pred_dt = None
+    datos_hora_dict_seleccionados = None
 
-        filas_madrugada = datos_meteo_df[
-            (datos_meteo_df['time'] >= madrugada_siguiente_inicio) &
-            (datos_meteo_df['time'] <= madrugada_siguiente_fin)
-        ]
-        if not filas_madrugada.empty:
-            fila_prediccion = filas_madrugada.iloc[[0]] # Tomar la primera hora de la madrugada (e.g., 00:00 o 01:00)
-            logger.info(f"Usando la primera hora disponible de la madrugada: {fila_prediccion['time'].iloc[0]}")
-        else:
-            logger.error(f"No se encontraron datos meteorológicos para la madrugada del {dia_siguiente}.")
-            return jsonify({"error": f"No se encontraron datos para la madrugada del {dia_siguiente}."}), 404
+    if datos_madrugada_df.empty:
+        logger.warning(f"No hay ningún dato horario disponible en Open-Meteo para el rango de {madrugada_inicio} a {madrugada_fin}.")
+    else:
+        # Iterar sobre las horas disponibles en la madrugada para encontrar la primera con datos completos
+        for index, fila_horaria in datos_madrugada_df.iterrows():
+            datos_hora_actual_dict = fila_horaria[COLUMNAS_FEATURES_PREDICCION].to_dict()
 
-    # Extraer la única fila de datos para la predicción
-    datos_para_modelo_serie = fila_prediccion.iloc[0]
-    fecha_pred_dt = datos_para_modelo_serie['time']
+            # Verificar si todos los datos necesarios están presentes y son válidos
+            completo_y_valido = True
+            for col in COLUMNAS_FEATURES_PREDICCION:
+                if col not in datos_hora_actual_dict or pd.isna(datos_hora_actual_dict[col]):
+                    completo_y_valido = False
+                    logger.debug(f"Dato faltante o NaN para '{col}' en {fila_horaria['time']}: {datos_hora_actual_dict[col]}")
+                    break # No es necesario seguir verificando esta fila
 
-    # COLUMNAS_FEATURES_PREDICCION ya está definido globalmente en main.py
-    datos_hora_dict = datos_para_modelo_serie[COLUMNAS_FEATURES_PREDICCION].to_dict()
+            if completo_y_valido:
+                datos_para_modelo_serie = fila_horaria
+                fecha_pred_dt = fila_horaria['time']
+                datos_hora_dict_seleccionados = datos_hora_actual_dict
+                logger.info(f"Datos completos encontrados para la predicción a las {fecha_pred_dt.strftime('%Y-%m-%d %H:%M:%S')}.")
+                break # Salir del bucle, ya encontramos la primera hora válida
+            else:
+                logger.info(f"Datos incompletos para {fila_horaria['time']}. Valores: {datos_hora_actual_dict}. Buscando siguiente hora...")
 
-    if not all(col in datos_hora_dict and pd.notna(datos_hora_dict[col]) for col in COLUMNAS_FEATURES_PREDICCION):
-        msg = f"Faltan datos o hay valores NaN para la predicción en {fecha_pred_dt}. Datos disponibles: {datos_hora_dict}"
+
+    if datos_para_modelo_serie is None or fecha_pred_dt is None:
+        msg = f"No se encontraron datos horarios completos para las variables {COLUMNAS_FEATURES_PREDICCION} en el rango de la madrugada del {dia_siguiente.strftime('%Y-%m-%d')} ({hora_inicio_madrugada:02d}:00-{hora_fin_madrugada:02d}:00)."
         logger.error(msg)
-        return jsonify({"error": msg}), 400
+        return jsonify({"error": msg}), 400 # o 404 si se considera "no encontrado"
 
-    df_pred_hora = pd.DataFrame([datos_hora_dict], columns=COLUMNAS_FEATURES_PREDICCION)
+    # Si llegamos aquí, tenemos datos_hora_dict_seleccionados válidos y completos
+    df_pred_hora = pd.DataFrame([datos_hora_dict_seleccionados], columns=COLUMNAS_FEATURES_PREDICCION)
     logger.info(f"DataFrame para predicción única: \n{df_pred_hora.to_string()}")
 
     try:
