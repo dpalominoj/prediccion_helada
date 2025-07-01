@@ -9,9 +9,9 @@ import pandas as pd
 import logging
 
 # --- Importaciones de módulos del proyecto (desde src) ---
-from src.database.database import init_db, get_db
-from src.database.models import Prediccion, IntensidadHelada, ResultadoPrediccion
-from src.data_fetcher import obtener_datos_meteorologicos_openmeteo, COLUMNAS_MODELO as FETCHED_COLUMNAS_MODELO
+from database.database import init_db, get_db
+from database.models import Prediccion, IntensidadHelada, ResultadoPrediccion
+from src.data_fetcher import obtener_datos_meteorologicos_openmeteo # FETCHED_COLUMNAS_MODELO será COLUMNAS_FEATURES_PREDICCION
 
 # --- Configuración de Logging ---
 logging.basicConfig(level=logging.INFO)
@@ -69,97 +69,6 @@ def determinar_estado_helada(prediccion_valor, probabilidad_helada, temperatura_
 def index():
     return render_template('interfaz_prediccion.html')
 
-# @app.route('/predecir', methods=['POST'])
-# def predecir():
-#     # --- Esta ruta para predicción manual ha sido comentada ---
-#     # --- La funcionalidad principal ahora es /pronostico_automatico ---
-#     logger.info("Ruta /predecir (manual) ha sido invocada, pero está deshabilitada.")
-#     return jsonify({"error": "La predicción manual ha sido deshabilitada. Utilice el pronóstico automático."}), 403
-#
-#     # if prediction_model is None:
-#     #     logger.error("Intento de predicción manual pero el modelo no está cargado.")
-#     #     return jsonify({"error": "Modelo de predicción no disponible."}), 500
-#     #
-#     # input_data_json = request.json
-#     # if not input_data_json:
-#     #     logger.warning("No se recibieron datos JSON en /predecir.")
-#     #     return jsonify({"error": "No se recibieron datos en formato JSON."}), 400
-#     #
-#     # datos_para_modelo_list = []
-#     # for col in COLUMNAS_FEATURES_PREDICCION:
-#     #     if col not in input_data_json:
-#     #         logger.error(f"Falta la columna '{col}' en los datos de entrada para predicción manual. Datos: {input_data_json}")
-#     #         return jsonify({"error": f"Dato de entrada incompleto. Falta '{col}'."}), 400
-#     #     try:
-#     #         datos_para_modelo_list.append(float(input_data_json[col]))
-#     #     except ValueError:
-#     #         logger.error(f"Valor no numérico para '{col}': {input_data_json[col]}")
-#     #         return jsonify({"error": f"Valor para '{col}' debe ser numérico."}), 400
-#     #
-#     # datos_para_modelo_dict = dict(zip(COLUMNAS_FEATURES_PREDICCION, datos_para_modelo_list))
-#     # ubicacion_manual = input_data_json.get("ubicacion", "Pucará (Manual)")
-#     # estacion_manual = input_data_json.get("estacion", "Estación Manual")
-#     #
-#     # try:
-#     #     df_para_predecir = pd.DataFrame([datos_para_modelo_dict], columns=COLUMNAS_FEATURES_PREDICCION)
-#     #     logger.info(f"DataFrame para predicción manual: \n{df_para_predecir.to_string()}")
-#     #
-#     #     pred_array = prediction_model.predict(df_para_predecir)
-#     #     prob_array = prediction_model.predict_proba(df_para_predecir)
-#     #     pred_valor = int(pred_array[0])
-#     #     prob_helada = float(prob_array[0][1])
-#     #
-#     #     resultado, intensidad, duracion = determinar_estado_helada(
-#     #         pred_valor, prob_helada, datos_para_modelo_dict['Temperatura']
-#     #     )
-#     #     pred_final = {
-#     #         "temperatura_minima_prevista": datos_para_modelo_dict['Temperatura'],
-#     #         "probabilidad_helada": prob_helada, "resultado": resultado,
-#     #         "intensidad": intensidad, "duracion_estimada_horas": duracion,
-#     #         "mensaje": f"Resultado (Manual): {'HELADA' if pred_valor == 1 else 'NO HELADA'} (Prob: {prob_helada:.2%})"
-#     #     }
-#     #     logger.info(f"Predicción manual realizada: {pred_final}")
-#     #
-#     # except Exception as e:
-#     #     logger.error(f"Error en predicción manual: {e}", exc_info=True)
-#     #     return jsonify({"error": f"Error interno en predicción manual: {str(e)}"}), 500
-#     #
-#     # db_session: Session = next(get_db())
-#     # try:
-#     #     nueva_pred = Prediccion(
-#     #         fecha_prediccion_para=datetime.datetime.utcnow() + datetime.timedelta(hours=1), # Placeholder
-#     #         ubicacion=ubicacion_manual, estacion_meteorologica=estacion_manual,
-#     #         temperatura_minima_prevista=pred_final["temperatura_minima_prevista"],
-#     #         probabilidad_helada=pred_final["probabilidad_helada"],
-#     #         resultado=pred_final["resultado"], intensidad=pred_final["intensidad"],
-#     #         duracion_estimada_horas=pred_final["duracion_estimada_horas"],
-#     #         parametros_entrada=json.dumps(datos_para_modelo_dict),
-#     #         fuente_datos_entrada="Entrada Manual API Flask (modelo_arbol_decision.pkl)"
-#     #     )
-#     #     db_session.add(nueva_pred)
-#     #     db_session.commit()
-#     #     db_session.refresh(nueva_pred)
-#     #     logger.info(f"Predicción manual guardada en BD con ID: {nueva_pred.id}")
-#     #
-#     #     respuesta = {
-#     #         "id": nueva_pred.id, "fecha_registro": nueva_pred.fecha_registro.isoformat(),
-#     #         "fecha_prediccion_para": nueva_pred.fecha_prediccion_para.isoformat(),
-#     #         "ubicacion": nueva_pred.ubicacion, "estacion_meteorologica": nueva_pred.estacion_meteorologica,
-#     #         "temperatura_minima_prevista": nueva_pred.temperatura_minima_prevista,
-#     #         "probabilidad_helada": nueva_pred.probabilidad_helada,
-#     #         "resultado": nueva_pred.resultado.value if nueva_pred.resultado else None,
-#     #         "intensidad": nueva_pred.intensidad.value if nueva_pred.intensidad else None,
-#     #         "duracion_estimada_horas": nueva_pred.duracion_estimada_horas,
-#     #         "mensaje_adicional": pred_final.get("mensaje")
-#     #     }
-#     #     return jsonify(respuesta), 200
-#     # except Exception as e:
-#     #     db_session.rollback()
-#     #     logger.error(f"Error al guardar predicción manual en BD: {e}", exc_info=True)
-#     #     return jsonify({"error": f"Error interno al guardar predicción manual: {str(e)}"}), 500
-#     # finally:
-#     #     db_session.close()
-
 @app.route('/pronostico_automatico', methods=['GET'])
 def pronostico_automatico():
     if prediction_model is None:
@@ -167,78 +76,135 @@ def pronostico_automatico():
         return jsonify({"error": "Modelo de predicción no disponible."}), 500
 
     logger.info("Iniciando pronóstico automático con datos de Open-Meteo...")
-    datos_meteo_df = obtener_datos_meteorologicos_openmeteo(dias_prediccion=2)
+
+    # Coordenadas para Patala, Pucará
+    lat_pucara = -12.20892
+    lon_pucara = -75.07791
+
+    # Pedimos datos para los próximos 2 días para asegurar que cubrimos la madrugada siguiente.
+    datos_meteo_df = obtener_datos_meteorologicos_openmeteo(lat_pucara, lon_pucara, dias_prediccion=2)
 
     if datos_meteo_df is None or datos_meteo_df.empty:
         logger.error("No se pudieron obtener datos de Open-Meteo.")
         return jsonify({"error": "No se pudieron obtener datos meteorológicos externos."}), 503
 
-    predicciones_guardadas = []
-    errores_prediccion = []
+    # Determinar la fecha y hora para la predicción de "noche o madrugada" del día siguiente.
+    # Por ejemplo, 3:00 AM del día siguiente.
+    # El 'time' en datos_meteo_df es un datetime object (potencialmente UTC o localizado por data_fetcher).
+    # Asumimos que 'time' está en una zona horaria consistente (ej. UTC) o ya localizado.
+    # data_fetcher usa timezone='auto', que podría ser UTC o la hora local del servidor.
+    # Para robustez, sería ideal que data_fetcher siempre devuelva UTC y aquí se maneje.
+    # Por ahora, confiamos en la consistencia de 'time'.
 
-    for _, fila_hora in datos_meteo_df.iterrows():
-        fecha_pred = fila_hora['time']
-        datos_hora_dict = fila_hora[FETCHED_COLUMNAS_MODELO].to_dict()
+    ahora = datetime.datetime.now(datos_meteo_df['time'].iloc[0].tzinfo if datos_meteo_df['time'].iloc[0].tzinfo else None)
+    dia_siguiente = ahora.date() + pd.Timedelta(days=1)
+    hora_prediccion_target = datetime.datetime.combine(dia_siguiente, datetime.datetime.min.time().replace(hour=3))
 
-        if not all(col in datos_hora_dict for col in COLUMNAS_FEATURES_PREDICCION):
-            msg = f"Faltan datos para predicción en {fecha_pred}. Datos: {datos_hora_dict.keys()}"
-            logger.error(msg)
-            errores_prediccion.append({"timestamp": fecha_pred.isoformat(), "error": msg})
-            continue
+    # Si los tiempos en df son naive y 'ahora' es aware (o viceversa), la comparación puede fallar o ser incorrecta.
+    # Forzamos hora_prediccion_target a tener el mismo estado de timezone que df['time']
+    if datos_meteo_df['time'].iloc[0].tzinfo is not None and hora_prediccion_target.tzinfo is None:
+        hora_prediccion_target = hora_prediccion_target.replace(tzinfo=datos_meteo_df['time'].iloc[0].tzinfo)
+    elif datos_meteo_df['time'].iloc[0].tzinfo is None and hora_prediccion_target.tzinfo is not None:
+        hora_prediccion_target = hora_prediccion_target.replace(tzinfo=None)
 
-        df_pred_hora = pd.DataFrame([datos_hora_dict], columns=COLUMNAS_FEATURES_PREDICCION)
+    logger.info(f"Buscando datos para la predicción alrededor de: {hora_prediccion_target}")
 
+    # Encontrar la fila más cercana a esta hora.
+    # Podríamos interpolar, pero por simplicidad, tomaremos la hora más cercana disponible.
+    # Open-Meteo devuelve datos horarios, así que deberíamos encontrar la hora exacta.
+    fila_prediccion = datos_meteo_df[datos_meteo_df['time'] == hora_prediccion_target]
+
+    if fila_prediccion.empty:
+        # Si no hay datos para la hora exacta, podríamos tomar la más cercana o la primera de la madrugada.
+        # Por ejemplo, datos entre las 00:00 y 06:00 del día siguiente.
+        logger.warning(f"No se encontraron datos para la hora exacta {hora_prediccion_target}. Buscando en rango de madrugada...")
+        madrugada_siguiente_inicio = datetime.datetime.combine(dia_siguiente, datetime.datetime.min.time())
+        madrugada_siguiente_fin = datetime.datetime.combine(dia_siguiente, datetime.datetime.min.time().replace(hour=6))
+
+        if datos_meteo_df['time'].iloc[0].tzinfo is not None: # Ajustar tz si es necesario
+            madrugada_siguiente_inicio = madrugada_siguiente_inicio.replace(tzinfo=datos_meteo_df['time'].iloc[0].tzinfo)
+            madrugada_siguiente_fin = madrugada_siguiente_fin.replace(tzinfo=datos_meteo_df['time'].iloc[0].tzinfo)
+
+        filas_madrugada = datos_meteo_df[
+            (datos_meteo_df['time'] >= madrugada_siguiente_inicio) &
+            (datos_meteo_df['time'] <= madrugada_siguiente_fin)
+        ]
+        if not filas_madrugada.empty:
+            fila_prediccion = filas_madrugada.iloc[[0]] # Tomar la primera hora de la madrugada (e.g., 00:00 o 01:00)
+            logger.info(f"Usando la primera hora disponible de la madrugada: {fila_prediccion['time'].iloc[0]}")
+        else:
+            logger.error(f"No se encontraron datos meteorológicos para la madrugada del {dia_siguiente}.")
+            return jsonify({"error": f"No se encontraron datos para la madrugada del {dia_siguiente}."}), 404
+
+    # Extraer la única fila de datos para la predicción
+    datos_para_modelo_serie = fila_prediccion.iloc[0]
+    fecha_pred_dt = datos_para_modelo_serie['time']
+
+    # COLUMNAS_FEATURES_PREDICCION ya está definido globalmente en main.py
+    datos_hora_dict = datos_para_modelo_serie[COLUMNAS_FEATURES_PREDICCION].to_dict()
+
+    if not all(col in datos_hora_dict and pd.notna(datos_hora_dict[col]) for col in COLUMNAS_FEATURES_PREDICCION):
+        msg = f"Faltan datos o hay valores NaN para la predicción en {fecha_pred_dt}. Datos disponibles: {datos_hora_dict}"
+        logger.error(msg)
+        return jsonify({"error": msg}), 400
+
+    df_pred_hora = pd.DataFrame([datos_hora_dict], columns=COLUMNAS_FEATURES_PREDICCION)
+    logger.info(f"DataFrame para predicción única: \n{df_pred_hora.to_string()}")
+
+    try:
+        pred_array = prediction_model.predict(df_pred_hora)
+        prob_array = prediction_model.predict_proba(df_pred_hora)
+        pred_valor = int(pred_array[0])
+        prob_helada = float(prob_array[0][1])
+        temp_pronosticada = datos_hora_dict['Temperatura']
+
+        resultado, intensidad, duracion = determinar_estado_helada(pred_valor, prob_helada, temp_pronosticada)
+
+        db_session: Session = next(get_db())
         try:
-            pred_array = prediction_model.predict(df_pred_hora)
-            prob_array = prediction_model.predict_proba(df_pred_hora)
-            pred_valor = int(pred_array[0])
-            prob_helada = float(prob_array[0][1])
-            temp_actual = datos_hora_dict['Temperatura']
-            resultado, intensidad, duracion = determinar_estado_helada(pred_valor, prob_helada, temp_actual)
+            nueva_pred = Prediccion(
+                fecha_prediccion_para=fecha_pred_dt.to_pydatetime(), # Convertir Timestamp de pandas a datetime de Python
+                ubicacion="Patala, Pucará (Open-Meteo)",
+                estacion_meteorologica="Open-Meteo Forecast",
+                temperatura_minima_prevista=temp_pronosticada,
+                probabilidad_helada=prob_helada, resultado=resultado,
+                intensidad=intensidad, duracion_estimada_horas=duracion,
+                parametros_entrada=json.dumps(datos_hora_dict),
+                fuente_datos_entrada="Open-Meteo API via src.data_fetcher (Pred. Madrugada)"
+            )
+            db_session.add(nueva_pred)
+            db_session.commit()
+            db_session.refresh(nueva_pred)
 
-            db_session: Session = next(get_db())
-            try:
-                nueva_pred = Prediccion(
-                    fecha_prediccion_para=fecha_pred,
-                    ubicacion="Patala, Pucará (Open-Meteo)",
-                    estacion_meteorologica="Open-Meteo Forecast",
-                    temperatura_minima_prevista=temp_actual,
-                    probabilidad_helada=prob_helada, resultado=resultado,
-                    intensidad=intensidad, duracion_estimada_horas=duracion,
-                    parametros_entrada=json.dumps(datos_hora_dict),
-                    fuente_datos_entrada="Open-Meteo API via src.data_fetcher"
-                )
-                db_session.add(nueva_pred)
-                db_session.commit()
-                db_session.refresh(nueva_pred)
-                predicciones_guardadas.append({
-                    "id": nueva_pred.id, "fecha_prediccion_para": nueva_pred.fecha_prediccion_para.isoformat(),
-                    "resultado": nueva_pred.resultado.value if nueva_pred.resultado else None,
-                    "intensidad": nueva_pred.intensidad.value if nueva_pred.intensidad else None
-                })
-                logger.info(f"Predicción horaria para {fecha_pred} guardada (ID: {nueva_pred.id}).")
-            except Exception as db_exc:
-                db_session.rollback()
-                msg = f"Error guardando predicción para {fecha_pred} en BD: {db_exc}"
-                logger.error(msg, exc_info=True)
-                errores_prediccion.append({"timestamp": fecha_pred.isoformat(), "error": msg})
-            finally:
-                db_session.close()
-        except Exception as model_exc:
-            msg = f"Error en predicción del modelo para {fecha_pred}: {model_exc}"
+            mensaje_final = f"Pronóstico para la madrugada del {dia_siguiente} (aprox. {fecha_pred_dt.strftime('%H:%M')}) guardado."
+            logger.info(f"{mensaje_final} (ID: {nueva_pred.id})")
+
+            respuesta_api = {
+                "id": nueva_pred.id,
+                "fecha_prediccion_para": nueva_pred.fecha_prediccion_para.isoformat(),
+                "ubicacion": nueva_pred.ubicacion,
+                "estacion_meteorologica": nueva_pred.estacion_meteorologica,
+                "temperatura_pronosticada": nueva_pred.temperatura_minima_prevista, # Renombrado para claridad
+                "probabilidad_helada": nueva_pred.probabilidad_helada,
+                "resultado": nueva_pred.resultado.value if nueva_pred.resultado else None,
+                "intensidad": nueva_pred.intensidad.value if nueva_pred.intensidad else None,
+                "duracion_estimada_horas": nueva_pred.duracion_estimada_horas,
+                "mensaje": mensaje_final
+            }
+            return jsonify(respuesta_api), 200
+
+        except Exception as db_exc:
+            db_session.rollback()
+            msg = f"Error guardando predicción para {fecha_pred_dt} en BD: {db_exc}"
             logger.error(msg, exc_info=True)
-            errores_prediccion.append({"timestamp": fecha_pred.isoformat(), "error": msg})
+            return jsonify({"error": msg}), 500
+        finally:
+            db_session.close()
 
-    num_exitos = len(predicciones_guardadas)
-    num_fallos = len(errores_prediccion)
-    mensaje_final = f"Pronóstico automático completado. {num_exitos} predicciones horarias guardadas. {num_fallos} errores."
-    logger.info(mensaje_final)
-
-    return jsonify({
-        "mensaje": mensaje_final,
-        "predicciones_exitosas": predicciones_guardadas,
-        "errores": errores_prediccion
-    }), 200 if num_fallos == 0 else 207
+    except Exception as model_exc:
+        msg = f"Error en predicción del modelo para {fecha_pred_dt}: {model_exc}"
+        logger.error(msg, exc_info=True)
+        return jsonify({"error": msg}), 500
 
 @app.route('/registros', methods=['GET'])
 def ver_registros():
@@ -250,9 +216,12 @@ def ver_registros():
 
         if fecha_filtro:
             try:
+                # strptime returns a datetime object, so calling .date() is correct here.
                 fecha_dt = datetime.datetime.strptime(fecha_filtro, "%Y-%m-%d").date()
-                query = query.filter( Prediccion.fecha_prediccion_para >= datetime.datetime.combine(fecha_dt, datetime.time.min),
-                                      Prediccion.fecha_prediccion_para <= datetime.datetime.combine(fecha_dt, datetime.time.max))
+                # datetime.datetime.combine needs a date object and a time object.
+                # datetime.time.min and datetime.time.max are correct.
+                query = query.filter( Prediccion.fecha_prediccion_para >= datetime.datetime.combine(fecha_dt, datetime.datetime.min.time()),
+                                      Prediccion.fecha_prediccion_para <= datetime.datetime.combine(fecha_dt, datetime.datetime.max.time()))
             except ValueError:
                 logger.warning(f"Formato de fecha inválido: {fecha_filtro}")
                 return jsonify({"error": "Formato de fecha inválido. Usar YYYY-MM-DD."}), 400
@@ -282,7 +251,8 @@ def ver_registros_ui():
     db_session: Session = next(get_db())
     try:
         registros = db_session.query(Prediccion).order_by(Prediccion.fecha_prediccion_para.desc()).all()
-        return render_template('interfaz_registros.html', registros=registros)
+        current_year = datetime.datetime.now().year
+        return render_template('interfaz_registros.html', registros=registros, current_year=current_year)
     except Exception as e:
         logger.error(f"Error en la ruta /registros_ui: {e}", exc_info=True)
         return render_template('error.html', error_message=str(e)), 500
