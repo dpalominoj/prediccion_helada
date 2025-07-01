@@ -30,8 +30,9 @@ def init_db():
     # No es estrictamente necesario si los modelos ya están importados en el contexto donde Base es definido
     # y Base.metadata.create_all(bind=engine) se llama desde models.py, por ejemplo.
     # Pero es una buena práctica centralizar la creación de tablas.
-    from .models import Base # Asegúrate de que tus modelos están definidos y Base es importada desde allí
-    Base.metadata.create_all(bind=engine)
+    # Se importa Base desde el módulo models en el mismo paquete (directorio)
+    from . import models
+    models.Base.metadata.create_all(bind=engine)
 
 # Función generadora para obtener una sesión de base de datos.
 # Esto se usará como una dependencia en las rutas de FastAPI (o funciones similares en Flask).
@@ -44,20 +45,10 @@ def get_db():
         db.close()
 
 # Si ejecutas este archivo directamente, puedes inicializar la base de datos.
+# Esto es útil para la configuración inicial o pruebas.
 if __name__ == "__main__":
     print("Inicializando la base de datos y creando tablas (si no existen)...")
-    # Para que init_db funcione correctamente si se ejecuta desde aquí,
-    # asegúrate de que los modelos estén accesibles.
-    # Si models.py ya llama a Base.metadata.create_all(), no necesitas llamarlo aquí de nuevo.
-    # Sin embargo, si quieres un punto centralizado para la creación de tablas, este es un buen lugar.
-
-    # Dado que models.py ya tiene su propio if __name__ == "__main__": para crear tablas,
-    # podríamos simplemente indicar que se ejecute ese archivo o llamar a su función.
-    # from .models import crear_tablas # Suponiendo que tienes una función así en models.py
-    # crear_tablas()
-
-    # O, si prefieres mantener la lógica de creación aquí:
-    # Primero, asegúrate de que models.py (y por lo tanto Base) se ha cargado
-    import models # Esto cargará models.py y su Base
-    Base.metadata.create_all(bind=engine) # Usa la Base importada
+    # Llama a init_db para asegurar que las tablas se creen usando la lógica centralizada.
+    # init_db() ya se encarga de importar models y llamar a Base.metadata.create_all(bind=engine).
+    init_db()
     print("Base de datos inicializada.")
