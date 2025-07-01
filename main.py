@@ -7,9 +7,10 @@ import os
 import joblib
 import pandas as pd
 import logging
+import database # Importamos el módulo para acceder a setup_database_engine
 
 # --- Importaciones de módulos del proyecto (desde src) ---
-from database.database import init_db, get_db
+from database.database import init_db, get_db, setup_database_engine # Añadido setup_database_engine
 from database.models import Prediccion, IntensidadHelada, ResultadoPrediccion
 from src.data_fetcher import obtener_datos_meteorologicos_openmeteo # FETCHED_COLUMNAS_MODELO será COLUMNAS_FEATURES_PREDICCION
 
@@ -21,10 +22,22 @@ app_logger.setLevel(logging.INFO)
 
 # --- Configuración de la Aplicación Flask ---
 app = Flask(__name__,
-            template_folder='interfaz_usuario',  # Relativo a la raíz del proyecto
-            static_folder='static')             # Relativo a la raíz del proyecto
-app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL') or 'sqlite:///./predicciones.db' # En la raíz
+            instance_relative_config=True,  # Para que instance_path funcione como se espera
+            template_folder='interfaz_usuario',
+            static_folder='static')
+
+# Configuración de la base de datos usando instance_path
+app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev-key968') # Buena práctica añadir una Secret Key
+try:
+    os.makedirs(app.instance_path, exist_ok=True) # Crea el directorio instance si no existe
+except OSError as e:
+    app.logger.error(f"Error creando el directorio de instancia {app.instance_path}: {e}")
+    # Considerar si la app debe detenerse aquí o continuar si la creación falla.
+
+default_sqlite_uri = f"sqlite:///{os.path.join(app.instance_path, 'predicciones.db')}"
+app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL', default_sqlite_uri)
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+app.logger.info(f"Usando DATABASE_URL: {app.config['SQLALCHEMY_DATABASE_URI']}")
 
 # --- Carga del Modelo de Predicción y Constantes ---
 # main.py está en la raíz.
@@ -259,16 +272,58 @@ def ver_registros_ui():
     finally:
         db_session.close()
 
+@app.route('/obtener_prediccion_actual', methods=['GET'])
+def obtener_prediccion_actual():
+    db_session: Session = next(get_db())
+    try:
+        # Buscar la predicción más reciente para hoy o el futuro cercano.
+        # Esto podría necesitar lógica más sofisticada dependiendo de cómo se definan las predicciones "actuales".
+        # Por ahora, buscaremos la predicción más reciente cuya 'fecha_prediccion_para' sea
+        # igual o posterior al inicio del día de hoy.
+        hoy_inicio = datetime.datetime.combine(datetime.date.today(), datetime.datetime.min.time())
+
+        prediccion_actual = db_session.query(Prediccion)\
+            .filter(Prediccion.fecha_prediccion_para >= hoy_inicio)\
+            .order_by(Prediccion.fecha_prediccion_para.asc())\
+            .first()
+
+        if prediccion_actual:
+            return jsonify({
+                "id": prediccion_actual.id,
+                "fecha_prediccion_para": prediccion_actual.fecha_prediccion_para.isoformat(),
+                "ubicacion": prediccion_actual.ubicacion,
+                "estacion_meteorologica": prediccion_actual.estacion_meteorologica,
+                "temperatura_pronosticada": prediccion_actual.temperatura_minima_prevista,
+                "probabilidad_helada": prediccion_actual.probabilidad_helada,
+                "resultado": prediccion_actual.resultado.value if prediccion_actual.resultado else None,
+                "intensidad": prediccion_actual.intensidad.value if prediccion_actual.intensidad else None,
+                "duracion_estimada_horas": prediccion_actual.duracion_estimada_horas,
+                "mensaje": "Predicción actual recuperada."
+            }), 200
+        else:
+            return jsonify({"mensaje": "No hay predicción actual disponible."}), 404
+    except Exception as e:
+        logger.error(f"Error al obtener la predicción actual de la BD: {e}", exc_info=True)
+        return jsonify({"error": f"Error al obtener predicción actual: {str(e)}"}), 500
+    finally:
+        db_session.close()
+
+
 # --- Lógica de inicialización y ejecución (del antiguo src/main.py) ---
-def inicializar_aplicacion():
-    logger.info("Inicializando la base de datos (si es necesario)...")
-    init_db() # Esta función está en src.database.database
-    logger.info("Base de datos lista.")
+def inicializar_aplicacion(flask_app):
+    logger.info("Configurando el motor de la base de datos...")
+    # Pasa la URI de la base de datos desde la configuración de Flask a database.py
+    setup_database_engine(flask_app.config['SQLALCHEMY_DATABASE_URI'])
+    logger.info("Motor de base de datos configurado.")
+
+    logger.info("Inicializando la base de datos (creando tablas si es necesario)...")
+    init_db() # Esta función ahora usa el motor configurado por setup_database_engine
+    logger.info("Base de datos lista y tablas verificadas/creadas.")
     # Aquí se podrían añadir otras inicializaciones si fueran necesarias
 
 if __name__ == '__main__':
     logger.info("Iniciando aplicación de predicción de heladas...")
-    inicializar_aplicacion()
+    inicializar_aplicacion(app) # Pasar la instancia de la app Flask
 
     logger.info(f"Iniciando servidor Flask. Accede a la interfaz en http://{os.environ.get('FLASK_HOST', '0.0.0.0')}:{os.environ.get('FLASK_PORT', 5000)}")
     app.run(

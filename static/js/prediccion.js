@@ -34,65 +34,45 @@ async function realizarPrediccionHoy() {
 
     console.log("Pronóstico automático recibido:", responseBody);
 
-    resultadoGlobalDiv.innerHTML = `<strong>${responseBody.mensaje}</strong>`;
+    // responseBody es el objeto de la predicción única guardada
+    const prediccion = responseBody;
 
-    if (responseBody.predicciones_exitosas && responseBody.predicciones_exitosas.length > 0) {
-      // Actualizar el cuadro de estado principal con la primera predicción significativa
-      // (o un resumen general si es más apropiado)
-      // Por ahora, tomamos la primera predicción como referencia para el estado general.
-      const primeraPred Significativa = responseBody.predicciones_exitosas.find(p => p.resultado === "Probable") || responseBody.predicciones_exitosas[0];
+    resultadoGlobalDiv.innerHTML = `<strong>${prediccion.mensaje || "Predicción procesada."}</strong>`;
 
-      if (primeraPred Significativa) {
-        document.getElementById('ubicacion').textContent = "Patala, Pucará (Open-Meteo)"; // Actualizar con datos relevantes
-        document.getElementById('estacion').textContent = "Open-Meteo Forecast";
+    // Actualizar los campos de la interfaz con la nueva predicción
+    document.getElementById('ubicacion').textContent = prediccion.ubicacion || "N/A";
+    document.getElementById('estacion').textContent = prediccion.estacion_meteorologica || "N/A";
 
-        const fechaPredPara = new Date(primeraPred Significativa.fecha_prediccion_para);
-        document.getElementById('fecha').textContent = `Desde ${fechaPredPara.toLocaleDateString('es-ES', { day: 'numeric', month: 'long' })} ${fechaPredPara.toLocaleTimeString('es-ES', {hour: '2-digit', minute:'2-digit'})} (Múltiples horarios)`;
-
-        document.getElementById('intensidad').textContent = primeraPred Significativa.intensidad || 'Varía';
-        document.getElementById('duracion').textContent = 'Varía por hora'; // Duración es horaria
-
-        statusText.textContent = primeraPred Significativa.resultado ? primeraPred Significativa.resultado.replace(/_/g, ' ') : 'No Determinado';
-        statusBox.className = 'flex-1 rounded-md flex flex-col items-center justify-center py-8 px-6'; // Reset clases
-        if (primeraPred Significativa.resultado === 'Probable') {
-          statusBox.classList.add('bg-red-500');
-        } else if (primeraPred Significativa.resultado === 'Poco Probable') {
-          statusBox.classList.add('bg-green-500');
-        } else {
-          statusBox.classList.add('bg-yellow-500');
-        }
-      } else {
-         statusText.textContent = "No hay predicciones significativas.";
-         statusBox.className = 'flex-1 rounded-md flex flex-col items-center justify-center py-8 px-6 bg-gray-500';
-      }
-
-      // Opcional: Mostrar una tabla con todas las predicciones horarias
-      let tablaHTML = '<table class="w-full text-xs text-gray-700 mt-2"><thead><tr class="bg-gray-100"><th class="px-2 py-1">Fecha/Hora</th><th class="px-2 py-1">Resultado</th><th class="px-2 py-1">Intensidad</th></tr></thead><tbody>';
-      responseBody.predicciones_exitosas.forEach(pred => {
-        const fechaHora = new Date(pred.fecha_prediccion_para);
-        tablaHTML += `<tr class="border-b border-gray-200">
-                        <td class="px-2 py-1">${fechaHora.toLocaleString('es-ES')}</td>
-                        <td class="px-2 py-1">${pred.resultado || '-'}</td>
-                        <td class="px-2 py-1">${pred.intensidad || '-'}</td>
-                      </tr>`;
+    if (prediccion.fecha_prediccion_para) {
+      const fechaPredPara = new Date(prediccion.fecha_prediccion_para);
+      document.getElementById('fecha').textContent = fechaPredPara.toLocaleDateString('es-ES', {
+        day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit'
       });
-      tablaHTML += '</tbody></table>';
-      tablaPronosticosDiv.innerHTML = tablaHTML;
-
     } else {
-      statusText.textContent = "No se generaron predicciones.";
-      statusBox.className = 'flex-1 rounded-md flex flex-col items-center justify-center py-8 px-6 bg-gray-500';
-      document.getElementById('ubicacion').textContent = '-';
-      document.getElementById('estacion').textContent = '-';
-      document.getElementById('fecha').textContent = '-';
-      document.getElementById('intensidad').textContent = '-';
-      document.getElementById('duracion').textContent = '-';
+      document.getElementById('fecha').textContent = "N/A";
     }
 
-    if (responseBody.errores && responseBody.errores.length > 0) {
-        resultadoGlobalDiv.innerHTML += `<br><span style="color: red;">Se encontraron ${responseBody.errores.length} errores durante el proceso. Ver consola para detalles.</span>`;
-        responseBody.errores.forEach(err => console.error("Error en predicción horaria:", err));
+    document.getElementById('intensidad').textContent = prediccion.intensidad || 'N/A';
+    document.getElementById('duracion').textContent = prediccion.duracion_estimada_horas ? `${prediccion.duracion_estimada_horas} horas` : 'N/A';
+
+    statusText.textContent = prediccion.resultado ? prediccion.resultado.replace(/_/g, ' ') : 'No Determinado';
+    statusBox.className = 'flex-1 rounded-md flex flex-col items-center justify-center py-8 px-6'; // Reset clases
+
+    if (prediccion.resultado === 'Probable') {
+      statusBox.classList.add('bg-red-500');
+    } else if (prediccion.resultado === 'Poco Probable') {
+      statusBox.classList.add('bg-green-500');
+    } else {
+      statusBox.classList.add('bg-yellow-500'); // Para "No Determinada" u otros casos
     }
+
+    // Limpiar la tabla de pronósticos detallados ya que solo tenemos una predicción principal ahora.
+    // Si en el futuro /pronostico_automatico devolviera múltiples, esta parte se podría reintroducir.
+    tablaPronosticosDiv.innerHTML = '';
+
+    // No hay una propiedad 'errores' directamente en la respuesta exitosa de /pronostico_automatico
+    // Los errores se manejan a través del bloque catch o el !response.ok
+    // Si hubiera errores parciales devueltos en un caso de éxito, necesitaríamos ajustar la API y este código.
 
   } catch (error) {
     console.error("Error al realizar el pronóstico automático (catch en JS):", error);
@@ -113,16 +93,65 @@ function verRegistroPredicciones() {
 }
 
 // Opcional: Cargar una predicción inicial o estado al cargar la página
-window.onload = () => {
-  console.log("Página cargada. Interfaz de predicción lista.");
-  // Limpiar el estado inicial si es el placeholder
-  if (document.getElementById('statusText').textContent === 'helada probable') {
-    document.getElementById('statusText').textContent = 'Listo para predicción';
-    document.getElementById('statusBox').className = 'flex-1 rounded-md flex flex-col items-center justify-center py-8 px-6 bg-gray-400'; // Un color neutral
-    document.getElementById('ubicacion').textContent = 'N/A';
-    document.getElementById('estacion').textContent = 'N/A';
-    document.getElementById('fecha').textContent = 'N/A';
-    document.getElementById('intensidad').textContent = 'N/A';
-    document.getElementById('duracion').textContent = 'N/A';
+window.onload = async () => {
+  console.log("Página cargada. Intentando cargar predicción actual.");
+  const statusBox = document.getElementById('statusBox');
+  const statusText = document.getElementById('statusText');
+  const ubicacionEl = document.getElementById('ubicacion');
+  const estacionEl = document.getElementById('estacion');
+  const fechaEl = document.getElementById('fecha');
+  const intensidadEl = document.getElementById('intensidad');
+  const duracionEl = document.getElementById('duracion');
+  // const statusImage = document.getElementById('statusImage'); // No se usa para cambiar imagen dinámicamente por ahora
+
+  try {
+    const response = await fetch('/obtener_prediccion_actual');
+    const data = await response.json();
+
+    if (response.ok) {
+      console.log("Predicción actual recibida:", data);
+      statusText.textContent = data.resultado ? data.resultado.replace(/_/g, ' ') : 'No Determinado';
+      ubicacionEl.textContent = data.ubicacion || 'N/A';
+      estacionEl.textContent = data.estacion_meteorologica || 'N/A';
+
+      if (data.fecha_prediccion_para) {
+        const fechaPred = new Date(data.fecha_prediccion_para);
+        fechaEl.textContent = fechaPred.toLocaleDateString('es-ES', {
+          day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit'
+        });
+      } else {
+        fechaEl.textContent = 'N/A';
+      }
+
+      intensidadEl.textContent = data.intensidad || 'N/A';
+      duracionEl.textContent = data.duracion_estimada_horas ? `${data.duracion_estimada_horas} horas` : 'N/A';
+
+      statusBox.className = 'flex-1 rounded-md flex flex-col items-center justify-center py-8 px-6'; // Reset clases
+      if (data.resultado === 'Probable') {
+        statusBox.classList.add('bg-red-500');
+      } else if (data.resultado === 'Poco Probable') {
+        statusBox.classList.add('bg-green-500');
+      } else {
+        statusBox.classList.add('bg-yellow-500'); // Neutral para "No Determinada" o si no hay resultado
+      }
+    } else {
+      console.log("No hay predicción actual disponible o error:", data.mensaje || response.status);
+      statusText.textContent = 'Listo para predicción';
+      statusBox.className = 'flex-1 rounded-md flex flex-col items-center justify-center py-8 px-6 bg-gray-400';
+      ubicacionEl.textContent = 'N/A';
+      estacionEl.textContent = 'N/A';
+      fechaEl.textContent = 'N/A';
+      intensidadEl.textContent = 'N/A';
+      duracionEl.textContent = 'N/A';
+    }
+  } catch (error) {
+    console.error("Error al cargar la predicción actual (catch en JS):", error);
+    statusText.textContent = 'Error al cargar';
+    statusBox.className = 'flex-1 rounded-md flex flex-col items-center justify-center py-8 px-6 bg-gray-500';
+    ubicacionEl.textContent = 'Error';
+    estacionEl.textContent = 'Error';
+    fechaEl.textContent = 'Error';
+    intensidadEl.textContent = 'Error';
+    duracionEl.textContent = 'Error';
   }
 };
