@@ -4,12 +4,9 @@ from sqlalchemy.orm import sessionmaker
 import datetime
 import enum
 
-# Define el motor de la base de datos (SQLite en este caso)
-DATABASE_URL = "sqlite:///./predicciones.db"
-engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False}) # check_same_thread es para SQLite
-
-# Base para los modelos declarativos
-Base = declarative_base()
+# El motor y la Base se definen en database.py para centralizar.
+# Aquí solo importamos Base.
+from .database import Base
 
 # Enum para la intensidad de la helada (ejemplo, se puede ajustar)
 class IntensidadHelada(str, enum.Enum):
@@ -49,44 +46,16 @@ class Prediccion(Base):
     def __repr__(self):
         return f"<Prediccion(id={self.id}, fecha_prediccion_para='{self.fecha_prediccion_para}', resultado='{self.resultado}')>"
 
-# Crear las tablas en la base de datos (si no existen)
-def crear_tablas():
-    Base.metadata.create_all(bind=engine)
+# La creación de tablas, SessionLocal y get_db se manejan en database.py.
+# El bloque if __name__ == "__main__": en database.py se encarga de la inicialización
+# si se ejecuta ese script directamente.
 
-# Configuración de la sesión de la base de datos
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+# Si se necesita crear tablas desde aquí por alguna razón específica (poco común ahora):
+# from .database import engine, Base
+# def crear_tablas_desde_models():
+#     Base.metadata.create_all(bind=engine)
 
-# Función para obtener una sesión de base de datos
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
-
-if __name__ == "__main__":
-    # Esto creará la base de datos y la tabla si ejecutas models.py directamente
-    print("Creando tablas en la base de datos (si no existen)...")
-    crear_tablas()
-    print("Tablas creadas (o ya existían).")
-
-    # Ejemplo de cómo añadir un registro (opcional, para prueba)
-    # from sqlalchemy.orm import Session
-    # db_session = SessionLocal()
-    # nueva_prediccion = Prediccion(
-    #     fecha_prediccion_para=datetime.datetime.utcnow() + datetime.timedelta(days=1),
-    #     ubicacion="Pucará - Ejemplo",
-    #     estacion_meteorologica="Estacion Test",
-    #     temperatura_minima_prevista=-1.5,
-    #     probabilidad_helada=0.75,
-    #     resultado=ResultadoPrediccion.probable,
-    #     intensidad=IntensidadHelada.leve,
-    #     duracion_estimada_horas=2.0,
-    #     parametros_entrada='{"temp_rocio": 2.0, "temp_min_aire_6h": 0.5}',
-    #     fuente_datos_entrada="Sensor XYZ"
-    # )
-    # db_session.add(nueva_prediccion)
-    # db_session.commit()
-    # db_session.refresh(nueva_prediccion)
-    # print(f"Predicción de ejemplo añadida con ID: {nueva_prediccion.id}")
-    # db_session.close()
+# Si se necesita una sesión desde aquí (poco común, debería ser a través de get_db):
+# from .database import SessionLocal
+# def obtener_sesion_local():
+#     return SessionLocal()

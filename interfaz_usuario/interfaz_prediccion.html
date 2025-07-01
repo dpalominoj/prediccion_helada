@@ -53,13 +53,21 @@
    </div>
    <br>
    <button onclick="realizarPrediccionHoy()" class="bg-blue-500 hover:bg-blue-600 text-white text-xs font-semibold rounded px-3 py-1 flex items-center space-x-1" type="button">
-     <i class="fas fa-thermometer-half"></i>
-     <span>Realizar Predicción para Hoy</span>
+     <i class="fas fa-cloud-sun-rain"></i>
+     <span>Pronóstico Automático (Hoy/Mañana con Open-Meteo)</span>
    </button>
    <button onclick="verRegistroPredicciones()" class="bg-gray-500 hover:bg-gray-600 text-white text-xs font-semibold rounded px-3 py-1 flex items-center space-x-1" type="button">
      <i class="fas fa-history"></i>
      <span>Ver Registro de Predicciones</span>
    </button>
+
+   <div id="resultadoGlobalPronostico" style="margin-top: 20px; border-top: 1px solid #ccc; padding-top: 10px; font-size: 0.8em;">
+       <!-- Aquí se mostrará el resumen del pronóstico automático -->
+   </div>
+   <div id="tablaPronosticosDetallados" style="margin-top: 10px; max-height: 300px; overflow-y: auto;">
+       <!-- Aquí podría ir una tabla con predicciones horarias si se desea mostrar -->
+   </div>
+
   </div>
  </body>
 </html>
